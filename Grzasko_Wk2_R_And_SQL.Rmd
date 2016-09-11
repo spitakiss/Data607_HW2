@@ -1,0 +1,147 @@
+---
+title: 'Homework Week2:  SQL and R'
+author: "Aaron Grzasko"
+date: "September 11, 2016"
+output: 
+     html_document:
+       theme: cerulean
+       highlight: pygments
+---
+___  
+
+##Assignment Overview  
+
+The author asked five individuals to rate six movies that opened in U.S. theaters during 2016.  Each rating is based on a scale of one to five, with `1` indicating a poor assessment, and `5` indicating an extremely favorable review.  In addition to collecting movie ratings, the author retrieved various movie metrics (e.g. box office revenue) and demographic information (e.g. date of birth) from the survey participants.     
+
+All survey data were initially stored in a MySQL database.  The information was then retrieved from within the R environment and stored into R dataframes.  
+
+For additional practice, the author performed a variety of multiple data manipulation and summarization tasks.  
+
+## Data
+
+A variety of data sources were used in this assignment:  
+  
+- Movie metrics (including genre, box office revenue year-to-date, MPAA ratings, etc.) were retrieved from [boxofficemojo.com](http://www.boxofficemojo.com/yearly/chart/?yr=2016).  Metrics involving box office revenue ostensbily were current as of 9/8/2016.  
+- IMDB average user ratings for movies were retrived from the [IMDB.com](http://www.imdb.com/).  
+- Additional movie rating and commentary data were obtained through informal polling of friends and family.  The names and demographic attributes of the survey particpants have been altered.  Survey data were also augmented with dummy data rendered entirely from the author's imagination.  
+
+## R References  
+The author referenced the following R resources to complete the assignment:  
+
+- [MySQL and R](https://www.r-bloggers.com/mysql-and-r/):  used to supplement understanding of `dbConnect()` and `dbGetQuery()` functions.  
+- [getPass](https://cran.r-project.org/web/packages/getPass/getPass.pdf):  used `getPass()` function in code so that username and password data were not explicitly reference in R Markdown document.  
+
+## Data Retrieval  
+
+**Load R Packages**  
+
+First, load relavent libraries:  
+```{r lib, warning = FALSE, message = FALSE}
+# Uncomment scripts below if packages are not already installed
+
+#install.packages('RMySQL')
+#install.packages('getPass')
+
+library(RMySQL)
+library(getPass)
+```
+
+**Retrieve and Store Database Tables, Overview**  
+Data are initially stored in a MySQL database, *movie_ratings*.  
+  
+The database contains three tables:  
+- movies  
+- raters  
+- rating_survey  
+
+The SQL script used to create the database--*movie_tables.sql*--is stored in the the author's Github repository for reference.  
+  
+For the purposes of this assignment, the author assumes that only a subset of the data in the MySQL is relevant to this exercise. Specifically, the author assumes that the *movies*, and *raters* tables are required in their entirety, but only a subset of the *rating_survey* survey data is necessary.  The author combines the relevant survey_data information with additional, relevant data from the other two tables.  
+
+**DB Connectivity**
+```{r sql_connect }
+# MySQL connection.  Using getPass() function to prompt user for username and password  
+my_db = dbConnect(MySQL(), user=getPass(msg = 'Enter username'), password= getPass('Enter Password'), dbname='movie_ratings')
+#on.exit(dbDisconnect(my_db))  
+```
+
+**Retrieve and Store Data in R DataFrames**  
+Note:  Box office revenue (both domestic and worldwide) and production budgets in the movies table are presented in $ Millions.
+
+```{r retrieve_store, eval=TRUE, warning = FALSE}
+# movie table
+sql_movies <- "Select * FROM movies;"
+movies.df <- dbGetQuery(my_db, sql_movies)
+knitr::kable(movies.df)
+
+# raters table
+sql_raters <- "Select * FROM raters;"
+raters.df <- dbGetQuery(my_db, sql_raters)
+knitr:: kable(raters.df)
+
+# rating_survey subset combined with data from other two tables
+sql_ratings <- "SELECT CONCAT(first_name, ' ', last_name) AS critic, title, rating, comments
+                    FROM movies
+                    INNER JOIN rating_survey
+                    ON movies.movie_id =  rating_survey.movie_id
+                    INNER JOIN raters
+                    ON rating_survey.rater_id = raters.rater_id;"
+
+ratings.df <- dbGetQuery(my_db, sql_ratings)
+
+# head of rating table
+knitr:: kable(head(ratings.df,10))
+```
+
+##Data Manipulation and Summaries
+
+**Rating Summaries by Movie**  
+Let's look at the mean survey rating by movie.  We'll ignore any NA values.  
+```{r avg_movie_rat}
+avg_mov_rating <-setNames(aggregate(ratings.df$rating, list(ratings.df$title),mean,na.rm = TRUE),c("title","rating"))
+avg_mov_rating$rating <-round(avg_mov_rating$rating,2)
+knitr::kable(avg_mov_rating)
+```
+  
+Now, let's combine our survey rating averages with IMDB survey averages.  
+Before we can do this, we'll need to scale the IMDB ratings to be on a scale of one to five, instead of one to ten.
+```{r imdb_compare}
+# scale imdb ratings
+movies.df$imdb_scaled_rat <- movies.df$imdb_rating / 2
+
+# merge and compare survey and imdb ratings
+ratings_compare <-subset(merge(avg_mov_rating,movies.df, by="title"), select = c(title,rating, imdb_scaled_rat))
+ratings_compare$diff <- ratings_compare$rating - ratings_compare$imdb_scaled_rat
+knitr:: kable(ratings_compare)
+```
+  
+Generally speaking, the survey mean ratings do not apear to be drastically different than the imdb ratings.  If we wanted to get more technical, we could use t tests to determine statistical signficance of the differences in means for each movie.  
+  
+**Rating Summary by Reviewer**  
+
+Let's now calculate the average movie rating per survey participant:  
+
+```{r avg_critic}
+avg_critic <-setNames(aggregate(ratings.df$rating, list(ratings.df$critic),mean, na.rm = TRUE),c("critic","rating"))
+avg_critic$rating <- round(avg_critic$rating,2)
+knitr:: kable(avg_critic)
+```
+  
+  
+Finally, let's produce bar plots of ratings distribution for each survey participant.  We will ignore all NAs:    
+```{r boxplot_ratings}
+par(mfrow = c(3,2))
+for (i in unique(ratings.df$critic)){
+    barplot(table(ratings.df[ratings.df$critic == i,]$rating), main = i)    
+}
+```
+
+The graphs are not too revealing, given the small sample size of movies for each participant.  However, these graphs would likely be very useful if had asked each participant to review more movies.  
+
+
+ 
+
+
+
+
+
